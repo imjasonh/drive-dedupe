@@ -19,7 +19,7 @@ var tok = flag.String("tok", "", "OAuth token")
 func main() {
 	flag.Parse()
 
-	svc, err := drive.New(&http.Client{Transport: authTransport{*tok}})
+	svc, err := drive.New(&http.Client{Transport: authTransport(*tok)})
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -74,11 +74,9 @@ func main() {
 	fmt.Println("can reclaim", float64(totalSize)/1024/1024/1024, "GiB of space")
 }
 
-type authTransport struct {
-	tok string
-}
+type authTransport string
 
 func (t authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	r.Header.Set("Authorization", "Bearer "+t.tok)
+	r.Header.Set("Authorization", "Bearer "+string(t))
 	return http.DefaultTransport.RoundTrip(r)
 }
