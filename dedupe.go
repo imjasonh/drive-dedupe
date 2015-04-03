@@ -2,15 +2,17 @@ package main
 
 import (
 	"flag"
-	"log"
+	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	drive "google.golang.org/api/drive/v2"
 	"google.golang.org/api/googleapi"
 )
 
-const fields = googleapi.Field("items(id,title,md5Checksum),nextPageToken")
+const fields = googleapi.Field("items(id,title,fileSize,md5Checksum),nextPageToken")
 
 var tok = flag.String("tok", "", "OAuth token")
 
@@ -19,28 +21,35 @@ func main() {
 
 	svc, err := drive.New(&http.Client{Transport: authTransport{*tok}})
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		os.Exit(1)
 	}
 	pageToken := ""
 
 	type file struct {
-		id, title string
+		md5, title string
+		size       int64
 	}
 
-	md5s := map[string][]file{}
-	for i := 0; i < 10; i++ {
-		log.Printf("querying page token %q\n", pageToken)
+	scannedFiles := 0
+	md5s := map[file][]string{}
+	fmt.Print("scanning files")
+	for {
+		fmt.Print(".")
 		fs, err := svc.Files.List().
 			MaxResults(1000).
 			PageToken(pageToken).
 			Fields(fields).
 			Do()
 		if err != nil {
-			log.Fatal(err)
+			fmt.Println(err)
+			os.Exit(1)
 		}
+		scannedFiles += len(fs.Items)
 		for _, f := range fs.Items {
 			if f.Md5Checksum != "" {
-				md5s[f.Md5Checksum] = append(md5s[f.Md5Checksum], file{f.Id, f.Title})
+				k := file{f.Md5Checksum, f.Title, f.FileSize}
+				md5s[k] = append(md5s[k], f.Id)
 			}
 		}
 		pageToken = fs.NextPageToken
@@ -50,14 +59,19 @@ func main() {
 		time.Sleep(time.Second)
 	}
 
+	var totalFiles int
+	var totalSize int64
 	for k, v := range md5s {
 		if len(v) > 1 {
-			log.Println("===", k, "===")
-			for _, v := range v[1:] {
-				log.Println(v.id, v.title)
-			}
+			fmt.Println("===", k.title, "(md5:", k.md5, ") ===")
+			fmt.Println("- reapable IDs:", strings.Join(v[1:], ", "))
+			totalFiles += len(v) - 1
+			totalSize += k.size * int64(len(v)-1)
 		}
 	}
+	fmt.Println("scanned", scannedFiles, "files")
+	fmt.Println("can reap", totalFiles, "files")
+	fmt.Println("can reclaim", float64(totalSize)/1024/1024/1024, "GiB of space")
 }
 
 type authTransport struct {
