@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strings"
 
+	humanize "github.com/dustin/go-humanize"
 	drive "google.golang.org/api/drive/v2"
 	"google.golang.org/api/googleapi"
 
@@ -30,17 +33,29 @@ var scopes = strings.Join([]string{
 	"email",
 }, " ")
 
+var emailTmpl = template.Must(template.New("email").Parse(`
+<html><body>
+<h1>You have {{.ReapableBytesStr}} of reapable files</h1>
+
+<p>The <b>Drive Deduplifier</b> has scanned {{.TotalFiles}} files and found {{.ReapableFiles}} that are duplicates.</p>
+</body></html>
+`))
+
 func init() {
-	http.HandleFunc("/", startHandler)
+	http.HandleFunc("/start", startHandler)
 	http.HandleFunc(redirectURLPath, oauthHandler)
 }
 
 func startHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := appengine.NewContext(r)
-
 	redirectURL := fmt.Sprintf("https://%s.appspot.com", appengine.AppID(ctx)) + redirectURLPath
-	url := fmt.Sprintf("https://accounts.google.com/o/oauth2/auth?response_type=code&approval_prompt=force&client_id=%s&redirect_uri=%s&scope=%s",
-		clientID, redirectURL, scopes)
+	url := "https://accounts.google.com/o/oauth2/auth?" + url.Values{
+		"response_type":   {"code"},
+		"approval_prompt": {"force"},
+		"client_id":       {clientID},
+		"redirect_uri":    {redirectURL},
+		"scope":           {scopes},
+	}.Encode()
 	http.Redirect(w, r, url, http.StatusSeeOther)
 }
 
@@ -53,7 +68,7 @@ func oauthHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	generateReport.Call(ctx, tok)
-	fmt.Fprintf(w, "generating report...") // TODO: moar pretty!
+	http.Redirect(w, r, "/started", http.StatusSeeOther)
 }
 
 func getAccessToken(ctx appengine.Context, code string) (string, error) {
@@ -128,7 +143,7 @@ var generateReport = delay.Func("generate", func(ctx appengine.Context, tok stri
 		size       int64
 	}
 
-	scannedFiles := 0
+	var report report
 	md5s := map[file][]string{}
 	for {
 		fs, err := svc.Files.List().
@@ -139,7 +154,7 @@ var generateReport = delay.Func("generate", func(ctx appengine.Context, tok stri
 		if err != nil {
 			return err
 		}
-		scannedFiles += len(fs.Items)
+		report.TotalFiles += len(fs.Items)
 		for _, f := range fs.Items {
 			if f.Md5Checksum != "" {
 				k := file{f.Md5Checksum, f.Title, f.FileSize}
@@ -152,27 +167,37 @@ var generateReport = delay.Func("generate", func(ctx appengine.Context, tok stri
 		}
 	}
 
-	var totalFiles int
-	var totalSize int64
 	for k, v := range md5s {
 		if len(v) > 1 {
 			//ctx.Infof("===", k.title, "(md5:", k.md5, ") ===")
 			//ctx.Infof("- reapable IDs:", strings.Join(v[1:], ", "))
-			totalFiles += len(v) - 1
-			totalSize += k.size * int64(len(v)-1)
+			report.ReapableFiles += len(v) - 1
+			report.ReapableBytes += k.size * int64(len(v)-1)
 		}
 	}
 
 	ctx.Infof("sending report to %q", email)
 
-	msg := fmt.Sprintf("scanned %d files, found %d reapable, totalling %d bytes", scannedFiles, totalFiles, totalSize)
+	var body bytes.Buffer
+	if err := emailTmpl.Execute(&body, map[string]interface{}{
+		"TotalFiles":       report.ReapableFiles,
+		"ReapableFiles":    report.ReapableFiles,
+		"ReapableBytesStr": humanize.Bytes(uint64(report.ReapableBytes)),
+	}); err != nil {
+		return err
+	}
 	return mail.Send(ctx, &mail.Message{
-		Sender:  "imjasonh@gmail.com",
-		To:      []string{email},
-		Subject: "Drive Deduplifier Report",
-		Body:    msg,
+		Sender:   "imjasonh@gmail.com",
+		To:       []string{email},
+		Subject:  "Drive Deduplifier Report",
+		HTMLBody: body.String(),
 	})
 })
+
+type report struct {
+	TotalFiles, ReapableFiles int
+	ReapableBytes             int64
+}
 
 type authTransport struct {
 	tok    string
