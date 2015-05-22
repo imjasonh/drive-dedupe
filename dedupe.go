@@ -1,4 +1,12 @@
-package main
+// TODO: Store the dedupe report in datastore, including the IDs of files we
+// can trash, and send a link to initiate that process. It might make sense to
+// also re-parent duplicate files so they end up in the same folders as their
+// trashed duplicates, I'll have to test if that actually works. If we store an
+// actionable dedupe report, it should expire after some amount of time (should
+// it also contain creds? :-/) and the email should include a list of duplicate
+// files that would be trashed.
+
+package dedupe
 
 import (
 	"bytes"
@@ -13,7 +21,6 @@ import (
 
 	humanize "github.com/dustin/go-humanize"
 	drive "google.golang.org/api/drive/v2"
-	"google.golang.org/api/googleapi"
 
 	"appengine"
 	"appengine/delay"
@@ -25,7 +32,6 @@ const (
 	clientID        = "1045967131934-0gdt52c0bp0e1g9dquib9atfvqjmjkjl.apps.googleusercontent.com"
 	clientSecret    = "Dna3ItrA-0yhbpvjj_8516oG"
 	redirectURLPath = "/oauth"
-	fields          = googleapi.Field("items(id,title,fileSize,md5Checksum),nextPageToken")
 )
 
 var scopes = strings.Join([]string{
@@ -151,7 +157,7 @@ var generateReport = delay.Func("generate", func(ctx appengine.Context, tok stri
 		fs, err := svc.Files.List().
 			MaxResults(1000).
 			PageToken(pageToken).
-			Fields(fields).
+			Fields("items(id,title,fileSize,md5Checksum),nextPageToken").
 			Do()
 		if err != nil {
 			return err
