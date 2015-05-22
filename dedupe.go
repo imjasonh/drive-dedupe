@@ -29,15 +29,17 @@ const (
 )
 
 var scopes = strings.Join([]string{
-	drive.DriveReadonlyScope,
+	drive.DriveMetadataReadonlyScope,
 	"email",
 }, " ")
 
 var emailTmpl = template.Must(template.New("email").Parse(`
 <html><body>
-<h1>You have {{.ReapableBytesStr}} of reapable files</h1>
+<h1>You have {{.ReapableBytes}} of duplicate files</h1>
 
 <p>The <b>Drive Deduplifier</b> has scanned {{.TotalFiles}} files and found {{.ReapableFiles}} that are duplicates.</p>
+
+<p>You are using <b>{{.UsedQuota}}</b> of your total {{.TotalQuota}} quota.</p>
 </body></html>
 `))
 
@@ -176,13 +178,24 @@ var generateReport = delay.Func("generate", func(ctx appengine.Context, tok stri
 		}
 	}
 
+	about, err := svc.About.Get().
+		Fields("quotaBytesUsed,quotaBytesTotal").
+		Do()
+	if err != nil {
+		return err
+	}
+	report.TotalQuota = about.QuotaBytesTotal
+	report.UsedQuota = about.QuotaBytesUsed
+
 	ctx.Infof("sending report to %q", email)
 
 	var body bytes.Buffer
 	if err := emailTmpl.Execute(&body, map[string]interface{}{
-		"TotalFiles":       report.ReapableFiles,
-		"ReapableFiles":    report.ReapableFiles,
-		"ReapableBytesStr": humanize.Bytes(uint64(report.ReapableBytes)),
+		"TotalFiles":    report.TotalFiles,
+		"ReapableFiles": report.ReapableFiles,
+		"ReapableBytes": humanize.Bytes(uint64(report.ReapableBytes)),
+		"TotalQuota":    humanize.Bytes(uint64(report.TotalQuota)),
+		"UsedQuota":     humanize.Bytes(uint64(report.UsedQuota)),
 	}); err != nil {
 		return err
 	}
@@ -197,6 +210,7 @@ var generateReport = delay.Func("generate", func(ctx appengine.Context, tok stri
 type report struct {
 	TotalFiles, ReapableFiles int
 	ReapableBytes             int64
+	TotalQuota, UsedQuota     int64
 }
 
 type authTransport struct {
