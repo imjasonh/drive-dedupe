@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	humanize "github.com/dustin/go-humanize"
+	value "github.com/imjasonh/appengine-value"
 	drive "google.golang.org/api/drive/v2"
 
 	"appengine"
@@ -29,8 +30,7 @@ import (
 )
 
 const (
-	clientID        = "1045967131934-0gdt52c0bp0e1g9dquib9atfvqjmjkjl.apps.googleusercontent.com"
-	clientSecret    = "Dna3ItrA-0yhbpvjj_8516oG"
+	clientID        = "1045967131934-90f9iknpqdcbk7i35vmcq753o8an5qcj.apps.googleusercontent.com"
 	redirectURLPath = "/oauth"
 )
 
@@ -84,7 +84,7 @@ func getAccessToken(ctx appengine.Context, code string) (string, error) {
 
 	req, err := http.NewRequest("POST", "https://accounts.google.com/o/oauth2/token", strings.NewReader(url.Values{
 		"client_id":     {clientID},
-		"client_secret": {clientSecret},
+		"client_secret": {value.Get(ctx, "client_secret")},
 		"code":          {code},
 		"scope":         {scopes},
 		"redirect_uri":  {fmt.Sprintf("https://%s.appspot.com", appengine.AppID(ctx)) + redirectURLPath},
